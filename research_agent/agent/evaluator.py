@@ -1,25 +1,27 @@
-import ollama
-from dotenv import load_dotenv
-import os
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import PromptTemplate
+from research_agent.config import settings
+import logging
 
-load_dotenv()
-
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL")
+logger = logging.getLogger(__name__)
 
 class Evaluator:
     SYSTEM_PROMPT = """
-    You are a critical evaluator. 
+    You are a critical evaluator.
     Identify missing context, errors, and unclear reasoning.
     Then rewrite the answer with improvements.
     """
 
-    def refine_answer(self, query: str, answer: str):
-        resp = ollama.chat(
-            model = OLLAMA_MODEL, 
-            messages = [
-                {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": f"Query:\n{query}\n\nAnswer:\n{answer}"}
-            ]
-        )
+    def __init__(self):
+        self.llm = ChatOllama(model=settings.ollama_model, temperature=0.1)
 
-        return resp["message"]["content"]
+    def refine_answer(self, query: str, answer: str) -> str:
+        prompt = PromptTemplate.from_template(
+            self.SYSTEM_PROMPT + "\n\nQuery: {query}\n\nAnswer: {answer}"
+        )
+        try:
+            response = self.llm.invoke(prompt.format(query=query, answer=answer))
+            return response.content.strip()
+        except Exception as e:
+            logger.error(f"Evaluation failed: {e}")
+            return answer

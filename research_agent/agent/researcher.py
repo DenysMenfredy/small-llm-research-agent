@@ -1,42 +1,55 @@
-import ollama
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import PromptTemplate
+from research_agent.agent.tools import web_search_tool, fetch_paper_tool, embed_store_tool
+from research_agent.config import settings
+import logging
 
-from services.web_search import web_search
-from services.fetch_paper import fetch_paper
-from services.vectorstore import embed_and_store
-
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL")
+logger = logging.getLogger(__name__)
 
 class Researcher:
-    def execute(self, plan: str):
-        steps = plan.split("\n")
+    SYSTEM_PROMPT = """
+    You are a research assistant. Based on the plan, decide which tool to use and what query to pass.
+    Output the tool name and the query, separated by a colon.
+    Available tools: web_search, fetch_paper, embed_store
+    """
 
+    def __init__(self):
+        self.llm = ChatOllama(model=settings.ollama_model, temperature=0.2)
+        self.tools = {
+            "web_search": web_search_tool,
+            "fetch_paper": fetch_paper_tool,
+            "embed_store": embed_store_tool
+        }
+
+    def execute(self, plan: str) -> str:
         notes = []
-
+        steps = plan.split("\n")
         for step in steps:
-            low = step.lower()
+            if not step.strip():
+                continue
+            prompt = PromptTemplate.from_template(self.SYSTEM_PROMPT + "\n\nStep: {step}")
+            try:
+                decision = self.llm.invoke(prompt.format(step=step)).content.strip()
+                if ":" in decision:
+                    tool_name, query = decision.split(":", 1)
+                    tool_name = tool_name.strip()
+                    query = query.strip()
+                    if tool_name in self.tools:
+                        result = self.tools[tool_name].invoke({"input": query})
+                        notes.append(result)
+                    else:
+                        notes.append(f"Unknown tool: {tool_name}")
+                else:
+                    notes.append(f"Could not parse decision: {decision}")
+            except Exception as e:
+                logger.error(f"Error in step '{step}': {e}")
+                notes.append(f"Error in step: {step}")
 
-            if "search" in low:
-                notes.append(web_search(step))
-
-            elif "paper" in low or "arxiv" in low:
-                notes.append(fetch_paper(step))
-
-            elif "embed" in low or "store" in low:
-                embed_and_store("\n".join(notes))
-
-        # Summarize and synthesize
-        resp = ollama.chat(
-            model = OLLAMA_MODEL, 
-            messages = [
-                {"role": "system", "content": "Summarize and synthesize the findings."},
-                {"role": "user", "content": "\n\n".join(notes)}
-            ]
-        )
-        
-        return resp["message"]["content"]
-
+        # Summarize
+        summary_prompt = PromptTemplate.from_template("Summarize and synthesize the following research notes:\n\n{notes}")
+        try:
+            summary = self.llm.invoke(summary_prompt.format(notes="\n\n".join(notes))).content.strip()
+            return summary
+        except Exception as e:
+            logger.error(f"Summarization failed: {e}")
+            return "\n\n".join(notes)

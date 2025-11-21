@@ -1,66 +1,44 @@
-
-
-import chromadb
-import ollama
+from langchain_chroma import Chroma
+from langchain_ollama import OllamaEmbeddings
+from research_agent.config import settings
 import uuid
+import logging
 
-# Initialize Chroma client (persistent on disk)
-chroma_client = chromadb.PersistentClient(path="./chroma")
+logger = logging.getLogger(__name__)
 
-# Create or get a collection
-# IMPORTANT: embedding dimension is inferred automatically by Chroma,
-# so you do NOT need to manually specify it if using "nomic-embed-text".
-collection = chroma_client.get_or_create_collection(
-    name="research_memory",
-    metadata={"hnsw:space": "cosine"}  # cosine similarity
+embeddings = OllamaEmbeddings(model="nomic-embed-text")
+vectorstore = Chroma(
+    collection_name="research_memory",
+    embedding_function=embeddings,
+    persist_directory=settings.chroma_path
 )
-
 
 def embed(text: str):
     """
     Get vector embedding from Ollama.
-    Using nomic-embed-text (recommended).
     """
-    resp = ollama.embed(
-        model="nomic-embed-text",
-        input=text
-    )
-    return resp["embeddings"][0]
-
+    try:
+        return embeddings.embed_query(text)
+    except Exception as e:
+        logger.error(f"Embed failed: {e}")
+        return []
 
 def embed_and_store(text: str, metadata: dict = None):
     """
     Stores text chunk(s) with vector embeddings into chromadb.
     """
-    vector = embed(text)
-    
-    collection.add(
-        ids=[str(uuid.uuid4())],
-        embeddings=[vector],
-        documents=[text],
-        metadatas=[metadata or {}]
-    )
-
+    try:
+        vectorstore.add_texts([text], ids=[str(uuid.uuid4())], metadatas=[metadata or {}])
+    except Exception as e:
+        logger.error(f"Embed and store failed: {e}")
 
 def search(query: str, k: int = 5):
     """
     Retrieve relevant documents from the vector store.
     """
-    query_embedding = embed(query)
-
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=k
-    )
-
-    # Normalize response for easier usage
-    docs = []
-    if results and "documents" in results:
-        for i in range(len(results["documents"][0])):
-            docs.append({
-                "document": results["documents"][0][i],
-                "metadata": results.get("metadatas", [{}])[0][i],
-                "distance": results["distances"][0][i],
-            })
-
-    return docs
+    try:
+        docs = vectorstore.similarity_search(query, k=k)
+        return [{"document": doc.page_content, "metadata": doc.metadata, "distance": 0} for doc in docs]  # distance not available
+    except Exception as e:
+        logger.error(f"Search failed: {e}")
+        return []

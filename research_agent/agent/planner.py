@@ -1,25 +1,18 @@
-import ollama
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL")
+from langchain_ollama import ChatOllama
+from langchain_core.prompts import PromptTemplate
+from research_agent.config import settings
 
 class Planner:
     SYSTEM_PROMPT = """
-    You are a research planner. Break the user's query into 
-    3–7 actionable, structured steps. Steps should be concise 
-    and follow a logical order.
+    You are a research planner. Break the user's query into
+    3–7 actionable, structured steps. Steps should be concise
+    and follow a logical order. Output only the steps, numbered.
     """
 
-    def create_plan(self, query: str):
-        response = ollama.chat(
-            model = OLLAMA_MODEL,
-            messages = [
-                {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": f"Task: {query}"}
-            ]
-        )
+    def __init__(self):
+        self.llm = ChatOllama(model=settings.ollama_model, temperature=0.1)
 
-        return response["message"]["content"]
+    def create_plan(self, query: str) -> str:
+        prompt = PromptTemplate.from_template(self.SYSTEM_PROMPT + "\n\nQuery: {query}")
+        response = self.llm.invoke(prompt.format(query=query))
+        return response.content.strip()
